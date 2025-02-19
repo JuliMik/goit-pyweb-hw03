@@ -3,7 +3,6 @@ from pathlib import Path
 from shutil import copyfile
 from threading import Thread
 import logging
-import os
 
 # Опис аргументів командного рядка
 parser = argparse.ArgumentParser(description="Sorting folder")
