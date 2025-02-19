@@ -1,68 +1,67 @@
 import argparse
-import logging
 from pathlib import Path
 from shutil import copyfile
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Thread
+import logging
+import os
 
-
-"""
---source [-s] 
---output [-o] default folder = dist
-"""
-
-# Створюємо парсер аргументів
+# Опис аргументів командного рядка
 parser = argparse.ArgumentParser(description="Sorting folder")
-# Додаємо аргументи
 parser.add_argument("--source", "-s", help="Source folder", required=True)
 parser.add_argument("--output", "-o", help="Output folder", default="dist")
-# Обробляємо аргументи
-args = vars(parser.parse_args())
 
-source = Path(args.get("source"))
-output = Path(args.get("output"))
+args = parser.parse_args()
+source = Path(args.source)
+output = Path(args.output)
 
-# Налаштовуємо логування
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(threadName)s %(message)s")
+# Перевірка наявності папки "output", створення якщо її немає
+output.mkdir(exist_ok=True)
+
+folders_to_process = [source]  # Список папок для обробки
+
+# Логування для зручності
+logging.basicConfig(level=logging.INFO, format="%(threadName)s %(message)s")
 
 
-# Створюємо список директорій
-def create_folders_list(path: Path) -> list:
-    folders = []
+def create_folder_list(path: Path) -> None:
+    """
+    Функція для рекурсивного отримання всіх папок.
+    """
     for el in path.iterdir():
         if el.is_dir():
-            folders.append(el)
-            folders.extend(create_folders_list(el))
-    return folders
+            folders_to_process.append(el)
+            create_folder_list(el)
 
 
-# Копіюємо файли
-def copy_file(el: Path) -> None:
-    if el.is_file():
-        ext = el.suffix[1:]
-        ext_folder = output / ext
-        try:
-            ext_folder.mkdir(exist_ok=True, parents=True)
-            copyfile(el, ext_folder / el.name)
-            logging.info(f"Файл {el.name} скопійовано в {ext_folder}")
-        except OSError as err:
-            logging.error(f"Не вдалося скопіювати {el}: {err}")
+def copy_file(path: Path) -> None:
+    """
+    Функція для копіювання файлів за їхнім розширенням.
+    """
+    for el in path.iterdir():
+        if el.is_file():
+            ext = el.suffix[1:]  # Отримання розширення файлу
+            if ext:  # Якщо розширення не порожнє
+                ext_folder = output / ext
+                ext_folder.mkdir(exist_ok=True, parents=True)  # Створення папки для розширення, якщо не існує
+                try:
+                    copyfile(el, ext_folder / el.name)  # Копіювання файлу
+                    logging.info(f"Файл {el.name} скопійовано в {ext_folder}")
+                except OSError as err:
+                    logging.error(f"Помилка копіювання файлу {el.name}: {err}")
 
 if __name__ == "__main__":
-    # Перевірка наявності вихідної папки
-    if not source.exists() or not source.is_dir():
-        logging.error(f"Вихідна папка {source} не існує або не є директорією.")
-        exit(1)
+    # Отримання всіх папок
+    create_folder_list(source)
 
-    output.mkdir(exist_ok=True)
+    # Створення потоків для кожної папки
+    threads = []
+    for folder in folders_to_process:
+        th = Thread(target=copy_file, args=(folder,))
+        th.start()
+        threads.append(th)
 
-    folders = [source] + create_folders_list(source)
+    # Очікування завершення всіх потоків
+    for th in threads:
+        th.join()
 
-    logging.info(f"Знайдено {len(folders)} папок для обробки.")
-
-    # Використовуємо ThreadPoolExecutor для кращого керування потоками
-    with ThreadPoolExecutor() as executor:
-        futures = [executor.submit(copy_file, el) for folder in folders for el in folder.iterdir()]
-        for future in as_completed(futures):
-            future.result()  # Для отримання потенційних винятків
-
-    logging.info(f"Папка {source} повність скопфйована!")
+    logging.info(f"Обробка завершена. Папка {source} скопійована в папку {output}")
